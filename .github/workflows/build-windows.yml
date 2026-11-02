@@ -1,0 +1,64 @@
+name: Build PDF Voice Reader (Windows .exe)
+
+on:
+  push:
+    branches: ["**"]
+    paths: ["pdf-voice-reader/**", ".github/workflows/build-windows.yml"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: pdf-voice-reader
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build single-file exe
+        run: |
+          python make_icon.py
+          pyinstaller --noconfirm --clean --onefile --windowed --name PDFVoiceReader --icon app.ico --add-data "app.ico;." --hidden-import win32com.client --hidden-import pythoncom --collect-data edge_tts pdf_voice_reader.py
+
+      - name: Self-test the packaged exe
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\PDFVoiceReader.exe -ArgumentList "--selftest","selftest.txt" -PassThru -Wait
+          Get-Content selftest.txt
+          if (-not (Select-String -Path selftest.txt -Pattern "SELFTEST OK" -Quiet)) { exit 1 }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item dist\PDFVoiceReader.exe release\
+          Copy-Item README.md release\README.md
+          Compress-Archive -Path release\* -DestinationPath PDFVoiceReader-Windows.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PDFVoiceReader-Windows
+          path: |
+            pdf-voice-reader/dist/PDFVoiceReader.exe
+            pdf-voice-reader/README.md
+
+      - name: Publish GitHub Release (on version tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            pdf-voice-reader/dist/PDFVoiceReader.exe
+            pdf-voice-reader/PDFVoiceReader-Windows.zip
